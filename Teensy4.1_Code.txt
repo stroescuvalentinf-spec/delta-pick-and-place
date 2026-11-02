@@ -1,0 +1,298 @@
+/*
+ * TEENSY 4.1 DELTA ROBOT CONTROLLER - UPDATED
+ * Features: 
+ * - Homing (Manual Pulse)
+ * - Gripper Control (Pin 19) via M401/M402
+ * - High Speed AccelStepper Logic
+ */
+
+#include <AccelStepper.h>
+#include <MultiStepper.h>
+#include "MKS_SERVO42.h"
+
+// ================= USER CONFIGURATION =================
+const bool INVERT_M1 = false; 
+const bool INVERT_M2 = false; 
+const bool INVERT_M3 = false; 
+
+// ================= PIN DEFINITIONS =================
+// Motor 1 (X)
+#define STEP_1 2
+#define DIR_1  3
+#define EN_1   4
+const byte ID_1 = 0;
+
+// Motor 2 (Y)
+#define STEP_2 6
+#define DIR_2  5
+#define EN_2   7
+const byte ID_2 = 1;
+
+// Motor 3 (Z)
+#define STEP_3 8
+#define DIR_3  9
+#define EN_3   10
+const byte ID_3 = 2;
+
+// Limit Switches (NO to Pin, COM to GND)
+#define LIM_X 24
+#define LIM_Y 25
+#define LIM_Z 26
+
+// GRIPPER PIN
+#define PIN_GRIPPER 19
+
+// ================= TUNING PARAMETERS =================
+long MAX_VELOCITY = 600000; 
+long MAX_ACCEL    = 150000; 
+const int HOMING_DELAY_US = 1500; 
+
+// Geometry & Gearing defaults
+int microsteps    = 16;
+int steps_per_rev = 200;
+float gear_ratio  = 5.0; 
+float steps_per_deg = 0.0;
+
+const int MAX_CMD_SIZE = 64;
+char buffer[MAX_CMD_SIZE];
+
+AccelStepper st1(AccelStepper::DRIVER, STEP_1, DIR_1);
+AccelStepper st2(AccelStepper::DRIVER, STEP_2, DIR_2);
+AccelStepper st3(AccelStepper::DRIVER, STEP_3, DIR_3);
+
+MKS_SERVO42 mks;
+#define MKS_SERIAL Serial8 
+
+// ================= HELPER FUNCTIONS =================
+
+void updateStepsPerDeg() {
+  steps_per_deg = (steps_per_rev * (float)microsteps * gear_ratio) / 360.0f;
+}
+
+long angleToSteps(float deg) {
+  return (long)lround(deg * steps_per_deg);
+}
+
+// Returns true if Triggered (LOW)
+bool isTriggered(int axis) {
+  if (axis == 1) return (digitalRead(LIM_X) == LOW);
+  if (axis == 2) return (digitalRead(LIM_Y) == LOW);
+  if (axis == 3) return (digitalRead(LIM_Z) == LOW);
+  return false;
+}
+
+void restoreHighSpeed() {
+  st1.setMaxSpeed(MAX_VELOCITY); st1.setAcceleration(MAX_ACCEL);
+  st2.setMaxSpeed(MAX_VELOCITY); st2.setAcceleration(MAX_ACCEL);
+  st3.setMaxSpeed(MAX_VELOCITY); st3.setAcceleration(MAX_ACCEL);
+}
+
+// ================= SETUP =================
+void setup() {
+  Serial.begin(115200);
+  MKS_SERIAL.begin(115200);
+  mks.initialize(&MKS_SERIAL, 115200);
+
+  // Motor Enable Pins
+  pinMode(EN_1, OUTPUT); digitalWrite(EN_1, LOW); 
+  pinMode(EN_2, OUTPUT); digitalWrite(EN_2, LOW);
+  pinMode(EN_3, OUTPUT); digitalWrite(EN_3, LOW);
+    
+  // Motor Step/Dir Pins
+  pinMode(STEP_1, OUTPUT); pinMode(DIR_1, OUTPUT);
+  pinMode(STEP_2, OUTPUT); pinMode(DIR_2, OUTPUT);
+  pinMode(STEP_3, OUTPUT); pinMode(DIR_3, OUTPUT);
+
+  // Limit Switches
+  pinMode(LIM_X, INPUT_PULLUP);
+  pinMode(LIM_Y, INPUT_PULLUP);
+  pinMode(LIM_Z, INPUT_PULLUP);
+
+  // Gripper
+  pinMode(PIN_GRIPPER, OUTPUT);
+  digitalWrite(PIN_GRIPPER, LOW); // Default OFF
+
+  updateStepsPerDeg();
+
+  // AccelStepper settings
+  st1.setPinsInverted(INVERT_M1, false, true);
+  st2.setPinsInverted(INVERT_M2, false, true);
+  st3.setPinsInverted(INVERT_M3, false, true);
+    
+  restoreHighSpeed();
+
+  long t = millis();
+  while(!Serial && (millis() - t) < 1000);
+  Serial.println("READY TEENSY_DELTA_V2");
+}
+
+// ================= MAIN LOOP =================
+void loop() {
+  while (Serial.available() > 0) {
+    char c = Serial.read();
+    if (c == '\n') {
+      buffer[strlen(buffer)] = 0; 
+      processCommand(); 
+      buffer[0] = 0;
+    } else if (strlen(buffer) < MAX_CMD_SIZE - 1) {
+      int len = strlen(buffer); 
+      buffer[len] = c; 
+      buffer[len+1] = 0;
+    }
+  }
+  st1.run(); st2.run(); st3.run();
+}
+
+// ================= HOMING ROUTINE =================
+void runHomingSequence() {
+  Serial.println("HOMING_START");
+  
+  bool dir1_up = INVERT_M1 ? HIGH : LOW;
+  bool dir2_up = INVERT_M2 ? HIGH : LOW;
+  bool dir3_up = INVERT_M3 ? HIGH : LOW;
+  
+  digitalWrite(DIR_1, dir1_up);
+  digitalWrite(DIR_2, dir2_up);
+  digitalWrite(DIR_3, dir3_up);
+  
+  bool done1 = false, done2 = false, done3 = false;
+  unsigned long t_start = millis();
+
+  while (!done1 || !done2 || !done3) {
+    if (millis() - t_start > 60000) { 
+      Serial.println(">> ERROR: HOMING TIMEOUT"); 
+      restoreHighSpeed(); return; 
+    }
+
+    // Check Sensors
+    if (!done1 && digitalRead(LIM_X) == LOW) { delayMicroseconds(50); if(digitalRead(LIM_X)==LOW) done1=true; }
+    if (!done2 && digitalRead(LIM_Y) == LOW) { delayMicroseconds(50); if(digitalRead(LIM_Y)==LOW) done2=true; }
+    if (!done3 && digitalRead(LIM_Z) == LOW) { delayMicroseconds(50); if(digitalRead(LIM_Z)==LOW) done3=true; }
+
+    // Pulse
+    if (!done1) digitalWrite(STEP_1, HIGH);
+    if (!done2) digitalWrite(STEP_2, HIGH);
+    if (!done3) digitalWrite(STEP_3, HIGH);
+    delayMicroseconds(5); 
+    if (!done1) digitalWrite(STEP_1, LOW);
+    if (!done2) digitalWrite(STEP_2, LOW);
+    if (!done3) digitalWrite(STEP_3, LOW);
+    
+    delayMicroseconds(HOMING_DELAY_US);
+  }
+  
+  Serial.println("Limits Hit. Retracting...");
+  delay(1000); 
+
+  st1.setCurrentPosition(0); st2.setCurrentPosition(0); st3.setCurrentPosition(0);
+  
+  st1.setAcceleration(MAX_ACCEL / 5); 
+  st2.setAcceleration(MAX_ACCEL / 5); 
+  st3.setAcceleration(MAX_ACCEL / 5); 
+  st1.setMaxSpeed(MAX_VELOCITY / 10); 
+  st2.setMaxSpeed(MAX_VELOCITY / 10); 
+  st3.setMaxSpeed(MAX_VELOCITY / 10);
+  
+  // Retract 5 degrees (down)
+  long retract_steps = angleToSteps(5.0); 
+  
+  st1.moveTo(retract_steps); st2.moveTo(retract_steps); st3.moveTo(retract_steps);
+  while (st1.distanceToGo() != 0 || st2.distanceToGo() != 0 || st3.distanceToGo() != 0) {
+    st1.run(); st2.run(); st3.run();
+  }
+
+  st1.setCurrentPosition(0); st2.setCurrentPosition(0); st3.setCurrentPosition(0);
+  restoreHighSpeed();
+  
+  Serial.println("HOME DONE");
+}
+
+// ================= COMMAND PARSER =================
+void processCommand() {
+  char* ptr = buffer;
+  while (*ptr == ' ') ptr++;
+  char cmd = toupper(*ptr++);
+
+  if (cmd == 'G') {
+    int code = atoi(ptr);
+    while(isdigit(*ptr)) ptr++; while(*ptr == ' ') ptr++;
+
+    if (code == 0 || code == 1) {
+      float t1=0, t2=0, t3=0, feed=-1;
+      bool has_A=false, has_B=false, has_C=false;
+
+      char* tmp = strtok(ptr, " ");
+      while (tmp != NULL) {
+        char key = toupper(tmp[0]);
+        float val = atof(tmp + 1);
+        if (key == 'A') { t1 = val; has_A = true; }
+        if (key == 'B') { t2 = val; has_B = true; }
+        if (key == 'C') { t3 = val; has_C = true; }
+        if (key == 'F') { feed = val; }
+        tmp = strtok(NULL, " ");
+      }
+
+      if (feed > 0) {
+        long s_speed = angleToSteps(feed);
+        if (s_speed < 100) s_speed = 100;
+        if (s_speed > MAX_VELOCITY) s_speed = MAX_VELOCITY;
+        st1.setMaxSpeed(s_speed); st2.setMaxSpeed(s_speed); st3.setMaxSpeed(s_speed);
+      } 
+
+      if (has_A) st1.moveTo(angleToSteps(t1));
+      if (has_B) st2.moveTo(angleToSteps(t2));
+      if (has_C) st3.moveTo(angleToSteps(t3));
+      Serial.println("OK");
+    }
+    else if (code == 28) {
+      runHomingSequence();
+    }
+  }
+  else if (cmd == 'M') {
+    int code = atoi(ptr);
+    while(isdigit(*ptr)) ptr++;
+
+    // M401: Gripper ON (High)
+    if (code == 401) {
+       digitalWrite(PIN_GRIPPER, HIGH);
+       Serial.println("OK GRIPPER ON");
+    }
+    // M402: Gripper OFF (Low)
+    else if (code == 402) {
+       digitalWrite(PIN_GRIPPER, LOW);
+       Serial.println("OK GRIPPER OFF");
+    }
+    // M204: Acceleration
+    else if (code == 204) { 
+      char* tmp = strtok(ptr, " ");
+      while(tmp != NULL) {
+         if (toupper(tmp[0]) == 'A') {
+            MAX_ACCEL = atol(tmp + 1);
+            if (MAX_ACCEL < 1000) MAX_ACCEL = 1000;
+            st1.setAcceleration(MAX_ACCEL); st2.setAcceleration(MAX_ACCEL); st3.setAcceleration(MAX_ACCEL);
+         }
+         tmp = strtok(NULL, " ");
+      }
+      Serial.println("OK M204");
+    }
+    else if (code == 350) { 
+       char* tmp = strtok(ptr, " ");
+       if (tmp) { microsteps = atoi(tmp); updateStepsPerDeg(); Serial.println("OK M350"); }
+    }
+    else if (code == 92) { 
+       char* tmp = strtok(ptr, " ");
+       while(tmp != NULL) {
+         if (toupper(tmp[0]) == 'R') {
+            float val = atof(tmp + 1);
+            if (val > 0) { gear_ratio = val; updateStepsPerDeg(); }
+         }
+         tmp = strtok(NULL, " ");
+      }
+    }
+    else if (code == 119) { 
+       Serial.print(isTriggered(1)); Serial.print(" "); 
+       Serial.print(isTriggered(2)); Serial.print(" "); 
+       Serial.println(isTriggered(3));
+    }
+  }
+}

@@ -1,0 +1,115 @@
+{
+  "offsets": {
+    "j1": 0.0,
+    "j2": 0.0,
+    "j3": 0.0,
+    "x": 0.0,
+    "y": 0.0,
+    "z": 0.0,
+    "tool": 0.0
+  },
+  "base_to_floor": 370.0,
+  "limits": {
+    "min_angle": -60.0,
+    "max_angle": 80.0
+  },
+  "home": {
+    "x": 0.0,
+    "y": 0.0,
+    "z": -230.0
+  },
+  "geometry": {
+    "e": 55.0,
+    "f": 171.0,
+    "re": 310.0,
+    "rf": 130.5
+  },
+  "recipes": {
+    "PickAndPlace": {
+      "objects": [
+        {
+          "name": "RED",
+          "h_min": 153,
+          "h_max": 179,
+          "s_min": 20,
+          "s_max": 255,
+          "v_min": 110,
+          "v_max": 255,
+          "min_area": 620,
+          "detect_line_px": 242,
+          "z_hover": -232.0,
+          "z_pick": -310.0,
+          "cam_offset_x": -2.4,
+          "cam_offset_y": 0.4,
+          "pump_delay": 0.2,
+          "drop_delay": 0.2,
+          "place_x": -36.5,
+          "place_y": 130.0,
+          "place_z": -232.0
+        },
+        {
+          "name": "YELLOW",
+          "h_min": 2,
+          "h_max": 42,
+          "s_min": 20,
+          "s_max": 255,
+          "v_min": 152,
+          "v_max": 255,
+          "min_area": 736,
+          "detect_line_px": 242,
+          "z_hover": -232.0,
+          "z_pick": -310.0,
+          "cam_offset_x": -2.4,
+          "cam_offset_y": 0.4,
+          "pump_delay": 0.2,
+          "drop_delay": 0.2,
+          "place_x": 49.0,
+          "place_y": 130.0,
+          "place_z": -232.0
+        }
+      ],
+      "ready_pos": {
+        "x": -25.0,
+        "y": 40.0,
+        "z": -232.0
+      }
+    }
+  },
+  "conveyor_speed_mm_s": -29.69134363746492,
+  "vision_matrix": [
+    [
+      -0.32181626558303833,
+      0.008251698687672615,
+      162.23666381835938
+    ],
+    [
+      0.0016510338755324483,
+      0.32855576276779175,
+      -94.64717102050781
+    ],
+    [
+      6.656830919382628e-06,
+      0.00022448282106779516,
+      1.0
+    ]
+  ],
+  "camera_offset": [
+    0,
+    0
+  ],
+  "test_recipe": {
+    "h_min": 154,
+    "h_max": 179,
+    "s_min": 20,
+    "s_max": 255,
+    "v_min": 117,
+    "v_max": 255,
+    "min_area": 1000
+  },
+  "vision_roi": [
+    4,
+    191,
+    479,
+    364
+  ]
+}
